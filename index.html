@@ -48,6 +48,7 @@
             .print-only { display: block !important; }
             body { background-color: white; }
             .card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+            .break-inside-avoid { break-inside: avoid; }
         }
     </style>
 </head>
@@ -78,7 +79,6 @@
             if (dateString instanceof Date) return dateString.toLocaleDateString('pt-BR');
             if (typeof dateString === 'string' && dateString.includes('/')) return dateString;
             try {
-                // Tenta lidar com string ISO
                 if (typeof dateString === 'string' && dateString.includes('-')) {
                     const [year, month, day] = dateString.split('-');
                     if (day && month && year) return `${day}/${month}/${year}`;
@@ -90,7 +90,7 @@
         // --- Componentes UI ---
 
         const Card = ({ title, value, iconName, subtext, color = "blue" }) => (
-            <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 card" style={{ borderColor: color === 'orange' ? '#F68B1F' : '#004587' }}>
+            <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 card break-inside-avoid" style={{ borderColor: color === 'orange' ? '#F68B1F' : '#004587' }}>
                 <div className="flex justify-between items-start">
                     <div>
                         <p className="text-sm font-medium text-gray-500 uppercase">{title}</p>
@@ -105,7 +105,7 @@
         );
 
         const ChartContainer = ({ title, id }) => (
-            <div className="bg-white p-6 rounded-xl shadow-sm card h-80">
+            <div className="bg-white p-6 rounded-xl shadow-sm card h-80 break-inside-avoid">
                 <h3 className="text-lg font-semibold text-gray-700 mb-4">{title}</h3>
                 <div className="relative h-64 w-full">
                     <canvas id={id}></canvas>
@@ -125,6 +125,8 @@
             
             const chartInstance1 = useRef(null);
             const chartInstance2 = useRef(null);
+            const chartInstance3 = useRef(null);
+            const chartInstance4 = useRef(null);
 
             useEffect(() => {
                 if (window.lucide) {
@@ -132,7 +134,6 @@
                 }
             }, [filteredData, data]);
 
-            // Função para processar os dados brutos (seja de CSV ou Excel)
             const processImportedData = (rawData) => {
                 const formattedData = rawData.map(row => {
                     const getVal = (key) => row[key] || row[key.trim()] || row[key + ' '] || '';
@@ -160,23 +161,18 @@
 
                 const fileName = file.name.toLowerCase();
 
-                // Lógica para Excel (.xlsx, .xls)
                 if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
-                        // Pega a primeira aba da planilha
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
-                        // Converte para JSON
-                        // raw: false tenta formatar os valores (ex: datas) como strings visualizáveis
                         const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false, defval: "" });
                         processImportedData(jsonData);
                     };
                     reader.readAsArrayBuffer(file);
                 } 
-                // Lógica para CSV
                 else if (fileName.endsWith('.csv')) {
                     Papa.parse(file, {
                         header: true,
@@ -216,11 +212,18 @@
 
             const stats = useMemo(() => {
                 const total = filteredData.length;
-                const ativos = filteredData.filter(d => !d.desligamento && d.situacao === 'Ativa').length;
+                // Lógica unificada para Ativos e Desligados
+                const ativos = filteredData.filter(d => {
+                    const isDesligado = (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado"));
+                    const isFinalizado = d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"));
+                    return !isDesligado && !isFinalizado; // Considera ativo se não for desligado nem finalizado
+                }).length;
+
                 const desligados = filteredData.filter(d => 
                     (d.desligamento && d.desligamento.trim() !== "") || 
                     (d.matricula && d.matricula.toLowerCase().includes("desligado"))
                 ).length;
+                
                 const finalizados = filteredData.filter(d => d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"))).length;
 
                 return { total, ativos, desligados, finalizados };
@@ -232,14 +235,39 @@
             useEffect(() => {
                 if (typeof Chart === 'undefined') return;
 
+                // 1. Dados para Desligados por Cidade
                 const desligadosData = filteredData.filter(d => (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado")));
-                
-                const byCity = {};
+                const byCityDesligados = {};
                 desligadosData.forEach(d => {
                     const city = d.cidade || "Não Informado";
-                    byCity[city] = (byCity[city] || 0) + 1;
+                    byCityDesligados[city] = (byCityDesligados[city] || 0) + 1;
                 });
 
+                // 2. Dados para Ativos por Cidade
+                const ativosData = filteredData.filter(d => {
+                    const isDesligado = (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado"));
+                    const isFinalizado = d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"));
+                    return !isDesligado && !isFinalizado;
+                });
+                const byCityAtivos = {};
+                ativosData.forEach(d => {
+                    const city = d.cidade || "Não Informado";
+                    byCityAtivos[city] = (byCityAtivos[city] || 0) + 1;
+                });
+
+                // 3. Dados para Top Empresas (Ativos)
+                const byEmpresaAtivos = {};
+                ativosData.forEach(d => {
+                    // Limpa o nome da empresa (opcional: pegar só o primeiro nome se for muito grande)
+                    const emp = d.empresa || "Não Informado";
+                    byEmpresaAtivos[emp] = (byEmpresaAtivos[emp] || 0) + 1;
+                });
+                // Ordena e pega Top 5
+                const topEmpresasLabels = Object.keys(byEmpresaAtivos).sort((a,b) => byEmpresaAtivos[b] - byEmpresaAtivos[a]).slice(0, 5);
+                const topEmpresasValues = topEmpresasLabels.map(l => byEmpresaAtivos[l]);
+
+
+                // 4. Dados Status Geral
                 const statusCounts = {
                     'Ativos': stats.ativos,
                     'Desligados': stats.desligados,
@@ -248,24 +276,31 @@
 
                 const ctx1 = document.getElementById('chartDesligados');
                 const ctx2 = document.getElementById('chartStatus');
+                const ctx3 = document.getElementById('chartAtivos');
+                const ctx4 = document.getElementById('chartEmpresas');
 
-                if (chartInstance1.current) {
-                    chartInstance1.current.destroy();
-                    chartInstance1.current = null;
-                }
-                if (chartInstance2.current) {
-                    chartInstance2.current.destroy();
-                    chartInstance2.current = null;
-                }
+                // Cleanup
+                [chartInstance1, chartInstance2, chartInstance3, chartInstance4].forEach(ref => {
+                    if(ref.current) { ref.current.destroy(); ref.current = null; }
+                });
 
+                // Config Comum para eixos Inteiros
+                const integerAxisOptions = {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { stepSize: 1, precision: 0 }
+                    }
+                };
+
+                // Chart 1: Desligados por Cidade (Laranja)
                 if (ctx1) {
                     chartInstance1.current = new Chart(ctx1, {
                         type: 'bar',
                         data: {
-                            labels: Object.keys(byCity),
+                            labels: Object.keys(byCityDesligados),
                             datasets: [{
-                                label: 'Desligamentos por Cidade',
-                                data: Object.values(byCity),
+                                label: 'Desligamentos',
+                                data: Object.values(byCityDesligados),
                                 backgroundColor: '#F68B1F', 
                                 borderRadius: 4
                             }]
@@ -273,11 +308,13 @@
                         options: { 
                             responsive: true, 
                             maintainAspectRatio: false,
-                            animation: { duration: 500 } 
+                            scales: integerAxisOptions,
+                            plugins: { legend: { display: false } }
                         }
                     });
                 }
 
+                // Chart 2: Status Geral (Doughnut)
                 if (ctx2) {
                     chartInstance2.current = new Chart(ctx2, {
                         type: 'doughnut',
@@ -291,14 +328,62 @@
                         options: { 
                             responsive: true, 
                             maintainAspectRatio: false,
-                            animation: { duration: 500 }
+                            plugins: { legend: { position: 'bottom' } }
+                        }
+                    });
+                }
+
+                // Chart 3: Ativos por Cidade (Azul Senac)
+                if (ctx3) {
+                    chartInstance3.current = new Chart(ctx3, {
+                        type: 'bar',
+                        data: {
+                            labels: Object.keys(byCityAtivos),
+                            datasets: [{
+                                label: 'Alunos Ativos',
+                                data: Object.values(byCityAtivos),
+                                backgroundColor: '#004587', 
+                                borderRadius: 4
+                            }]
+                        },
+                        options: { 
+                            responsive: true, 
+                            maintainAspectRatio: false,
+                            scales: integerAxisOptions,
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                }
+
+                // Chart 4: Top 5 Empresas (Horizontal Bar)
+                if (ctx4) {
+                    chartInstance4.current = new Chart(ctx4, {
+                        type: 'bar',
+                        data: {
+                            labels: topEmpresasLabels,
+                            datasets: [{
+                                label: 'Alunos Ativos',
+                                data: topEmpresasValues,
+                                backgroundColor: '#3B82F6', 
+                                borderRadius: 4
+                            }]
+                        },
+                        options: { 
+                            indexAxis: 'y', // Barra Horizontal
+                            responsive: true, 
+                            maintainAspectRatio: false,
+                            scales: {
+                                x: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
+                            },
+                            plugins: { legend: { display: false } }
                         }
                     });
                 }
                 
                 return () => {
-                     if (chartInstance1.current) chartInstance1.current.destroy();
-                     if (chartInstance2.current) chartInstance2.current.destroy();
+                     [chartInstance1, chartInstance2, chartInstance3, chartInstance4].forEach(ref => {
+                        if(ref.current) ref.current.destroy();
+                    });
                 };
 
             }, [filteredData, stats]);
@@ -407,9 +492,11 @@
                             />
                         </div>
 
-                        {/* Charts Section */}
+                        {/* Charts Section - 2 Colunas */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                            <ChartContainer title="Distribuição de Ativos por Cidade" id="chartAtivos" />
                             <ChartContainer title="Distribuição de Desligamentos por Cidade" id="chartDesligados" />
+                            <ChartContainer title="Top 5 Empresas com mais Ativos" id="chartEmpresas" />
                             <ChartContainer title="Panorama Geral dos Contratos" id="chartStatus" />
                         </div>
 
