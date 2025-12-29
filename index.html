@@ -50,15 +50,16 @@
 </head>
 <body>
     <div id="root">
-        <div style="display: flex; justify-content: center; align-items: center; height: 100vh; color: #004587; font-weight: bold;">
-            Carregando Dashboard...
+        <div style="display: flex; justify-content: center; align-items: center; height: 100vh; color: #004587; font-weight: bold; flex-direction: column; gap: 10px;">
+            <div>Carregando Dashboard...</div>
+            <div style="font-size: 12px; color: #666;">Se demorar, recarregue a página.</div>
         </div>
     </div>
 
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- Dados Iniciais Mockados (Corrigidos para refletir estrutura exata) ---
+        // --- Dados Iniciais Mockados ---
         const INITIAL_DATA = [
             { projeto: "6117/2025", turma: "202501023", situacao: "Ativa", inicio: "2025-11-10", fim: "2026-11-09", empresa: "COASUL COOPERATIVA AGROINDUSTRIAL", cidade: "SULINA", estado: "PR", nome: "NELSE MARA SICHORRA SCHUNEMANN", matricula: "Ativa", desligamento: "" },
             { projeto: "6117/2025", turma: "202501023", situacao: "Ativa", inicio: "2025-11-10", fim: "2026-11-09", empresa: "COASUL COOPERATIVA AGROINDUSTRIAL", cidade: "SÃO JORGE D'OESTE", estado: "PR", nome: "VICTOR GABRIEL GONÇALVES PIMENTEL", matricula: "Ativa", desligamento: "" },
@@ -71,9 +72,7 @@
         // --- Função Auxiliar de Formatação de Data ---
         const formatDate = (dateString) => {
             if (!dateString) return "-";
-            // Se já estiver em DD/MM/AAAA, retorna
             if (dateString.includes('/')) return dateString;
-            // Se estiver em YYYY-MM-DD
             try {
                 const [year, month, day] = dateString.split('-');
                 if (day && month && year) return `${day}/${month}/${year}`;
@@ -83,7 +82,7 @@
 
         // --- Componentes UI ---
 
-        const Card = ({ title, value, icon, subtext, color = "blue" }) => (
+        const Card = ({ title, value, iconName, subtext, color = "blue" }) => (
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 card" style={{ borderColor: color === 'orange' ? '#F68B1F' : '#004587' }}>
                 <div className="flex justify-between items-start">
                     <div>
@@ -92,7 +91,7 @@
                         {subtext && <p className="text-xs text-gray-400 mt-1">{subtext}</p>}
                     </div>
                     <div className={`p-3 rounded-full ${color === 'orange' ? 'bg-orange-100 text-senac-orange' : 'bg-blue-100 text-senac-blue'}`}>
-                        {icon}
+                        <i data-lucide={iconName} className="w-6 h-6"></i>
                     </div>
                 </div>
             </div>
@@ -113,34 +112,33 @@
             const [data, setData] = useState(INITIAL_DATA);
             const [filteredData, setFilteredData] = useState(INITIAL_DATA);
             
-            // Filtros
             const [searchTerm, setSearchTerm] = useState("");
             const [statusFilter, setStatusFilter] = useState("Todos");
             const [projectFilter, setProjectFilter] = useState("Todos");
             
-            // Referências de Gráficos
-            const chartRef1 = useRef(null);
-            const chartRef2 = useRef(null);
             const chartInstance1 = useRef(null);
             const chartInstance2 = useRef(null);
 
-            // Manipulador de Upload de CSV
+            // Effect para carregar ícones SEMPRE que os dados mudarem (corrige o loop infinito)
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [filteredData, data]); // Dependências específicas
+
             const handleFileUpload = (event) => {
                 const file = event.target.files[0];
                 if (file) {
                     Papa.parse(file, {
                         header: true,
                         skipEmptyLines: true,
-                        encoding: "UTF-8", // Força UTF-8 para corrigir acentos
+                        encoding: "UTF-8",
                         complete: (results) => {
-                            // Mapeamento ROBUSTO baseado nas colunas exatas da planilha enviada
                             const formattedData = results.data.map(row => {
-                                // Tenta encontrar a coluna mesmo se houver espaços extras
                                 const getVal = (key) => row[key] || row[key.trim()] || row[key + ' '] || '';
-                                
                                 return {
                                     projeto: getVal('Projeto'),
-                                    turma: getVal('Turma'), // Resolve o problema do espaço em "Turma "
+                                    turma: getVal('Turma'),
                                     situacao: getVal('Situação'),
                                     inicio: getVal('Data de Inicio'),
                                     fim: getVal('Data Fim'),
@@ -152,7 +150,6 @@
                                     desligamento: getVal('Data Desligamento')
                                 };
                             });
-                            // Remove linhas vazias (onde projeto ou nome não existem)
                             const cleanData = formattedData.filter(d => d.projeto && d.nome);
                             setData(cleanData);
                         }
@@ -160,7 +157,6 @@
                 }
             };
 
-            // Lógica de Filtragem
             useEffect(() => {
                 let temp = data;
 
@@ -184,16 +180,13 @@
                 setFilteredData(temp);
             }, [data, searchTerm, statusFilter, projectFilter]);
 
-            // Cálculos de Estatísticas (KPIs)
             const stats = useMemo(() => {
                 const total = filteredData.length;
                 const ativos = filteredData.filter(d => !d.desligamento && d.situacao === 'Ativa').length;
-                
                 const desligados = filteredData.filter(d => 
                     (d.desligamento && d.desligamento.trim() !== "") || 
                     (d.matricula && d.matricula.toLowerCase().includes("desligado"))
                 ).length;
-                
                 const finalizados = filteredData.filter(d => d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"))).length;
 
                 return { total, ativos, desligados, finalizados };
@@ -203,7 +196,6 @@
 
             // Atualização dos Gráficos
             useEffect(() => {
-                // Verificação de segurança: Se o Chart.js não carregou, não tenta criar gráficos
                 if (typeof Chart === 'undefined') return;
 
                 const desligadosData = filteredData.filter(d => (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado")));
@@ -223,8 +215,15 @@
                 const ctx1 = document.getElementById('chartDesligados');
                 const ctx2 = document.getElementById('chartStatus');
 
-                if (chartInstance1.current) chartInstance1.current.destroy();
-                if (chartInstance2.current) chartInstance2.current.destroy();
+                // Cleanup mais seguro
+                if (chartInstance1.current) {
+                    chartInstance1.current.destroy();
+                    chartInstance1.current = null;
+                }
+                if (chartInstance2.current) {
+                    chartInstance2.current.destroy();
+                    chartInstance2.current = null;
+                }
 
                 if (ctx1) {
                     chartInstance1.current = new Chart(ctx1, {
@@ -238,7 +237,11 @@
                                 borderRadius: 4
                             }]
                         },
-                        options: { responsive: true, maintainAspectRatio: false }
+                        options: { 
+                            responsive: true, 
+                            maintainAspectRatio: false,
+                            animation: { duration: 500 } // Reduz duração da animação para performance
+                        }
                     });
                 }
 
@@ -252,9 +255,19 @@
                                 backgroundColor: ['#004587', '#F68B1F', '#10B981'],
                             }]
                         },
-                        options: { responsive: true, maintainAspectRatio: false }
+                        options: { 
+                            responsive: true, 
+                            maintainAspectRatio: false,
+                            animation: { duration: 500 }
+                        }
                     });
                 }
+                
+                // Cleanup function do useEffect
+                return () => {
+                     if (chartInstance1.current) chartInstance1.current.destroy();
+                     if (chartInstance2.current) chartInstance2.current.destroy();
+                };
 
             }, [filteredData, stats]);
 
@@ -338,26 +351,26 @@
                             <Card 
                                 title="Total Aprendizes" 
                                 value={stats.total} 
-                                icon={<i data-lucide="users" className="w-6 h-6"></i>} 
+                                iconName="users" 
                                 color="blue"
                             />
                             <Card 
                                 title="Aprendizes Ativos" 
                                 value={stats.ativos} 
-                                icon={<i data-lucide="user-check" className="w-6 h-6"></i>} 
+                                iconName="user-check" 
                                 color="blue"
                             />
                             <Card 
                                 title="Desligados" 
                                 value={stats.desligados} 
-                                icon={<i data-lucide="user-x" className="w-6 h-6"></i>} 
+                                iconName="user-x" 
                                 subtext="Contratos encerrados antecipadamente"
                                 color="orange"
                             />
                              <Card 
                                 title="Finalizados" 
                                 value={stats.finalizados} 
-                                icon={<i data-lucide="graduation-cap" className="w-6 h-6"></i>} 
+                                iconName="graduation-cap" 
                                 color="blue"
                             />
                         </div>
@@ -438,16 +451,6 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
         
-        // Garante carregamento dos ícones com fallback
-        setTimeout(() => {
-            if (window.lucide) window.lucide.createIcons();
-        }, 500);
-        
-        const observer = new MutationObserver(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-
     </script>
 </body>
 </html>
