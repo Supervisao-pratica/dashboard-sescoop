@@ -71,6 +71,7 @@
             { projeto: "0237/2025", turma: "202400988", situacao: "Ativa", inicio: "2024-09-16", fim: "2025-09-11", empresa: "COAGRO COOPERATIVA AGROINDUSTRIAL", cidade: "SANTO ANTÔNIO DO SUDOESTE", estado: "PR", nome: "ALAN JEISON DE BORBA HOFFMANN", matricula: "Desligado", desligamento: "2024-12-10" },
             { projeto: "0237/2025", turma: "202400988", situacao: "Ativa", inicio: "2024-09-16", fim: "2025-09-11", empresa: "COAMO", cidade: "MANGUEIRINHA", estado: "PR", nome: "AMANDA BUENO", matricula: "Turma Finalizada", desligamento: "" },
             { projeto: "0237/2025", turma: "202400988", situacao: "Ativa", inicio: "2024-09-16", fim: "2025-09-11", empresa: "COAMO", cidade: "CRUZMALTINA", estado: "PR", nome: "CRISTIAN DE CAMARGO SILVA", matricula: "Desligado", desligamento: "2025-01-15" },
+            { projeto: "0237/2025", turma: "202400988", situacao: "Ativa", inicio: "2024-09-16", fim: "2025-09-11", empresa: "COAMO", cidade: "CAMPO MOURÃO", estado: "PR", nome: "JOAO SILVA", matricula: "Desligado", desligamento: "2024-11-20" },
         ];
 
         // --- Função Auxiliar de Formatação de Data ---
@@ -122,11 +123,10 @@
             const [searchTerm, setSearchTerm] = useState("");
             const [statusFilter, setStatusFilter] = useState("Todos");
             const [projectFilter, setProjectFilter] = useState("Todos");
+            const [cityFilter, setCityFilter] = useState("Todas");
             
-            const chartInstance1 = useRef(null);
-            const chartInstance2 = useRef(null);
-            const chartInstance3 = useRef(null);
-            const chartInstance4 = useRef(null);
+            // Refs para gráficos
+            const chartRefs = useRef({});
 
             useEffect(() => {
                 if (window.lucide) {
@@ -187,9 +187,11 @@
                 }
             };
 
+            // Lógica de Filtragem Atualizada
             useEffect(() => {
                 let temp = data;
 
+                // 1. Busca textual
                 if (searchTerm) {
                     const lowerSearch = searchTerm.toLowerCase();
                     temp = temp.filter(item => 
@@ -199,24 +201,45 @@
                     );
                 }
 
+                // 2. Filtro de Situação (Atualizado com lógica de Desligados)
                 if (statusFilter !== "Todos") {
-                    temp = temp.filter(item => item.situacao === statusFilter);
+                    if (statusFilter === "Desligados") {
+                         // Filtra SOMENTE quem tem data de desligamento ou status desligado
+                         temp = temp.filter(d => (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado")));
+                    } else if (statusFilter === "Ativos") {
+                        // Filtra quem NÃO é desligado e NÃO é finalizado
+                        temp = temp.filter(d => {
+                            const isDesligado = (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado"));
+                            const isFinalizado = d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"));
+                            return !isDesligado && !isFinalizado;
+                        });
+                    } else if (statusFilter === "Finalizados") {
+                        temp = temp.filter(d => d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada")));
+                    } else {
+                        // Fallback para filtro simples da coluna situação (ex: Ativa/Finalizada original)
+                        temp = temp.filter(item => item.situacao === statusFilter);
+                    }
                 }
 
+                // 3. Filtro de Projeto
                 if (projectFilter !== "Todos") {
                     temp = temp.filter(item => item.projeto === projectFilter);
                 }
+                
+                // 4. Filtro de Cidade
+                if (cityFilter !== "Todas") {
+                    temp = temp.filter(item => item.cidade === cityFilter);
+                }
 
                 setFilteredData(temp);
-            }, [data, searchTerm, statusFilter, projectFilter]);
+            }, [data, searchTerm, statusFilter, projectFilter, cityFilter]);
 
             const stats = useMemo(() => {
                 const total = filteredData.length;
-                // Lógica unificada para Ativos e Desligados
                 const ativos = filteredData.filter(d => {
                     const isDesligado = (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado"));
                     const isFinalizado = d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"));
-                    return !isDesligado && !isFinalizado; // Considera ativo se não for desligado nem finalizado
+                    return !isDesligado && !isFinalizado;
                 }).length;
 
                 const desligados = filteredData.filter(d => 
@@ -229,164 +252,213 @@
                 return { total, ativos, desligados, finalizados };
             }, [filteredData]);
 
-            const uniqueProjects = useMemo(() => [...new Set(data.map(item => item.projeto))].filter(Boolean), [data]);
+            // Listas para os filtros (dropdowns)
+            const uniqueProjects = useMemo(() => [...new Set(data.map(item => item.projeto))].filter(Boolean).sort(), [data]);
+            const uniqueCities = useMemo(() => [...new Set(data.map(item => item.cidade))].filter(Boolean).sort(), [data]);
 
             // Atualização dos Gráficos
             useEffect(() => {
                 if (typeof Chart === 'undefined') return;
 
-                // 1. Dados para Desligados por Cidade
+                // --- PREPARAÇÃO DE DADOS ---
+
+                // 1. Dados de Desligados (Geral)
                 const desligadosData = filteredData.filter(d => (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado")));
+                
+                // 1.1 Desligados por Cidade
                 const byCityDesligados = {};
                 desligadosData.forEach(d => {
                     const city = d.cidade || "Não Informado";
                     byCityDesligados[city] = (byCityDesligados[city] || 0) + 1;
                 });
 
-                // 2. Dados para Ativos por Cidade
+                // 1.2 Desligados por Mês (Linha do Tempo)
+                const byPeriodDesligados = {};
+                desligadosData.forEach(d => {
+                    if (d.desligamento && d.desligamento.length >= 7) {
+                        // Tenta extrair YYYY-MM ou MM/YYYY
+                        let key = "";
+                        if(d.desligamento.includes('-')) key = d.desligamento.substring(0, 7); // YYYY-MM
+                        else if(d.desligamento.includes('/')) {
+                            const parts = d.desligamento.split('/');
+                            if(parts.length >= 3) key = `${parts[2]}-${parts[1]}`; // YYYY-MM
+                        }
+                        if(key) byPeriodDesligados[key] = (byPeriodDesligados[key] || 0) + 1;
+                    }
+                });
+                const sortedPeriods = Object.keys(byPeriodDesligados).sort(); // Ordena cronologicamente
+                const periodValues = sortedPeriods.map(p => byPeriodDesligados[p]);
+
+                // 1.3 Desligados por Empresa
+                const byEmpresaDesligados = {};
+                desligadosData.forEach(d => {
+                    const emp = d.empresa || "Não Informado";
+                    byEmpresaDesligados[emp] = (byEmpresaDesligados[emp] || 0) + 1;
+                });
+                // Top 10 Empresas com desligamentos para não poluir
+                const topEmpresasDeslLabels = Object.keys(byEmpresaDesligados).sort((a,b) => byEmpresaDesligados[b] - byEmpresaDesligados[a]).slice(0, 10);
+                const topEmpresasDeslValues = topEmpresasDeslLabels.map(l => byEmpresaDesligados[l]);
+
+
+                // 2. Dados de Ativos
                 const ativosData = filteredData.filter(d => {
                     const isDesligado = (d.desligamento && d.desligamento.trim() !== "") || (d.matricula && d.matricula.toLowerCase().includes("desligado"));
                     const isFinalizado = d.situacao === 'Finalizada' || (d.matricula && d.matricula.includes("Finalizada"));
                     return !isDesligado && !isFinalizado;
                 });
+                
+                // 2.1 Ativos por Cidade
                 const byCityAtivos = {};
                 ativosData.forEach(d => {
                     const city = d.cidade || "Não Informado";
                     byCityAtivos[city] = (byCityAtivos[city] || 0) + 1;
                 });
 
-                // 3. Dados para Top Empresas (Ativos)
+                // 2.2 Top Empresas Ativos
                 const byEmpresaAtivos = {};
                 ativosData.forEach(d => {
-                    // Limpa o nome da empresa (opcional: pegar só o primeiro nome se for muito grande)
                     const emp = d.empresa || "Não Informado";
                     byEmpresaAtivos[emp] = (byEmpresaAtivos[emp] || 0) + 1;
                 });
-                // Ordena e pega Top 5
                 const topEmpresasLabels = Object.keys(byEmpresaAtivos).sort((a,b) => byEmpresaAtivos[b] - byEmpresaAtivos[a]).slice(0, 5);
                 const topEmpresasValues = topEmpresasLabels.map(l => byEmpresaAtivos[l]);
 
-
-                // 4. Dados Status Geral
+                // 3. Status Geral
                 const statusCounts = {
                     'Ativos': stats.ativos,
                     'Desligados': stats.desligados,
                     'Finalizados': stats.finalizados
                 };
 
-                const ctx1 = document.getElementById('chartDesligados');
-                const ctx2 = document.getElementById('chartStatus');
-                const ctx3 = document.getElementById('chartAtivos');
-                const ctx4 = document.getElementById('chartEmpresas');
+                // LÓGICA ANTI-POLUIÇÃO (Se muitas cidades, pega Top 15)
+                const limitChartData = (objData) => {
+                    if (cityFilter !== "Todas") return { labels: Object.keys(objData), values: Object.values(objData) };
+                    
+                    const sortedKeys = Object.keys(objData).sort((a,b) => objData[b] - objData[a]);
+                    const topKeys = sortedKeys.slice(0, 15);
+                    return { labels: topKeys, values: topKeys.map(k => objData[k]) };
+                };
 
-                // Cleanup
-                [chartInstance1, chartInstance2, chartInstance3, chartInstance4].forEach(ref => {
-                    if(ref.current) { ref.current.destroy(); ref.current = null; }
-                });
+                const cityAtivosClean = limitChartData(byCityAtivos);
+                const cityDesligadosClean = limitChartData(byCityDesligados);
 
-                // Config Comum para eixos Inteiros
-                const integerAxisOptions = {
-                    y: {
-                        beginAtZero: true,
-                        ticks: { stepSize: 1, precision: 0 }
+
+                // --- RENDERIZAÇÃO ---
+                
+                // Cleanup function helper
+                const destroyChart = (id) => {
+                    if (chartRefs.current[id]) {
+                        chartRefs.current[id].destroy();
+                        chartRefs.current[id] = null;
                     }
                 };
 
-                // Chart 1: Desligados por Cidade (Laranja)
-                if (ctx1) {
-                    chartInstance1.current = new Chart(ctx1, {
+                const ctxs = {
+                    ativos: document.getElementById('chartAtivos'),
+                    desligados: document.getElementById('chartDesligados'),
+                    empresas: document.getElementById('chartEmpresas'),
+                    status: document.getElementById('chartStatus'),
+                    evolucao: document.getElementById('chartEvolucao'),
+                    empresaDesl: document.getElementById('chartEmpresaDesl')
+                };
+
+                // Config Comum
+                const integerAxisOptions = {
+                    y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
+                };
+
+                // 1. Ativos por Cidade
+                destroyChart('ativos');
+                if (ctxs.ativos) {
+                    chartRefs.current['ativos'] = new Chart(ctxs.ativos, {
                         type: 'bar',
                         data: {
-                            labels: Object.keys(byCityDesligados),
-                            datasets: [{
-                                label: 'Desligamentos',
-                                data: Object.values(byCityDesligados),
-                                backgroundColor: '#F68B1F', 
-                                borderRadius: 4
-                            }]
+                            labels: cityAtivosClean.labels,
+                            datasets: [{ label: 'Ativos', data: cityAtivosClean.values, backgroundColor: '#004587', borderRadius: 4 }]
                         },
-                        options: { 
-                            responsive: true, 
-                            maintainAspectRatio: false,
-                            scales: integerAxisOptions,
-                            plugins: { legend: { display: false } }
-                        }
+                        options: { responsive: true, maintainAspectRatio: false, scales: integerAxisOptions, plugins: { legend: { display: false } } }
                     });
                 }
 
-                // Chart 2: Status Geral (Doughnut)
-                if (ctx2) {
-                    chartInstance2.current = new Chart(ctx2, {
-                        type: 'doughnut',
-                        data: {
-                            labels: Object.keys(statusCounts),
-                            datasets: [{
-                                data: Object.values(statusCounts),
-                                backgroundColor: ['#004587', '#F68B1F', '#10B981'],
-                            }]
-                        },
-                        options: { 
-                            responsive: true, 
-                            maintainAspectRatio: false,
-                            plugins: { legend: { position: 'bottom' } }
-                        }
-                    });
-                }
-
-                // Chart 3: Ativos por Cidade (Azul Senac)
-                if (ctx3) {
-                    chartInstance3.current = new Chart(ctx3, {
+                // 2. Desligados por Cidade
+                destroyChart('desligados');
+                if (ctxs.desligados) {
+                    chartRefs.current['desligados'] = new Chart(ctxs.desligados, {
                         type: 'bar',
                         data: {
-                            labels: Object.keys(byCityAtivos),
-                            datasets: [{
-                                label: 'Alunos Ativos',
-                                data: Object.values(byCityAtivos),
-                                backgroundColor: '#004587', 
-                                borderRadius: 4
-                            }]
+                            labels: cityDesligadosClean.labels,
+                            datasets: [{ label: 'Desligamentos', data: cityDesligadosClean.values, backgroundColor: '#EF4444', borderRadius: 4 }]
                         },
-                        options: { 
-                            responsive: true, 
-                            maintainAspectRatio: false,
-                            scales: integerAxisOptions,
-                            plugins: { legend: { display: false } }
-                        }
+                        options: { responsive: true, maintainAspectRatio: false, scales: integerAxisOptions, plugins: { legend: { display: false } } }
                     });
                 }
 
-                // Chart 4: Top 5 Empresas (Horizontal Bar)
-                if (ctx4) {
-                    chartInstance4.current = new Chart(ctx4, {
+                // 3. Top 5 Empresas (Ativos)
+                destroyChart('empresas');
+                if (ctxs.empresas) {
+                    chartRefs.current['empresas'] = new Chart(ctxs.empresas, {
                         type: 'bar',
                         data: {
                             labels: topEmpresasLabels,
-                            datasets: [{
-                                label: 'Alunos Ativos',
-                                data: topEmpresasValues,
-                                backgroundColor: '#3B82F6', 
-                                borderRadius: 4
-                            }]
+                            datasets: [{ label: 'Ativos', data: topEmpresasValues, backgroundColor: '#3B82F6', borderRadius: 4 }]
                         },
-                        options: { 
-                            indexAxis: 'y', // Barra Horizontal
-                            responsive: true, 
-                            maintainAspectRatio: false,
-                            scales: {
-                                x: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
-                            },
-                            plugins: { legend: { display: false } }
-                        }
+                        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } }
                     });
                 }
-                
+
+                // 4. Panorama Geral
+                destroyChart('status');
+                if (ctxs.status) {
+                    chartRefs.current['status'] = new Chart(ctxs.status, {
+                        type: 'doughnut',
+                        data: {
+                            labels: Object.keys(statusCounts),
+                            datasets: [{ data: Object.values(statusCounts), backgroundColor: ['#004587', '#EF4444', '#10B981'] }]
+                        },
+                        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+                    });
+                }
+
+                // 5. Evolução Desligamentos (Linha)
+                destroyChart('evolucao');
+                if (ctxs.evolucao) {
+                    chartRefs.current['evolucao'] = new Chart(ctxs.evolucao, {
+                        type: 'line',
+                        data: {
+                            labels: sortedPeriods,
+                            datasets: [{ 
+                                label: 'Desligamentos por Mês', 
+                                data: periodValues, 
+                                borderColor: '#F68B1F',
+                                backgroundColor: 'rgba(246, 139, 31, 0.1)',
+                                fill: true,
+                                tension: 0.3
+                            }]
+                        },
+                        options: { responsive: true, maintainAspectRatio: false, scales: integerAxisOptions }
+                    });
+                }
+
+                // 6. Desligamentos por Empresa (Barra Horizontal)
+                destroyChart('empresaDesl');
+                if (ctxs.empresaDesl) {
+                    chartRefs.current['empresaDesl'] = new Chart(ctxs.empresaDesl, {
+                        type: 'bar',
+                        data: {
+                            labels: topEmpresasDeslLabels,
+                            datasets: [{ label: 'Desligamentos', data: topEmpresasDeslValues, backgroundColor: '#EF4444', borderRadius: 4 }]
+                        },
+                        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } }
+                    });
+                }
+
                 return () => {
-                     [chartInstance1, chartInstance2, chartInstance3, chartInstance4].forEach(ref => {
-                        if(ref.current) ref.current.destroy();
+                    Object.keys(chartRefs.current).forEach(key => {
+                        if(chartRefs.current[key]) chartRefs.current[key].destroy();
                     });
                 };
 
-            }, [filteredData, stats]);
+            }, [filteredData, stats, cityFilter]);
 
             const handlePrint = () => {
                 window.print();
@@ -423,20 +495,21 @@
                         
                         {/* Filters Bar */}
                         <div className="bg-white p-4 rounded-xl shadow-sm mb-8 flex flex-col md:flex-row gap-4 items-end md:items-center no-print border border-gray-100">
-                            <div className="w-full md:w-1/3">
-                                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Buscar Aprendiz / Empresa</label>
-                                <div className="relative">
-                                    <i data-lucide="search" className="absolute left-3 top-2.5 w-4 h-4 text-gray-400"></i>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Digite nome, cidade ou empresa..." 
-                                        className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                        value={searchTerm}
-                                        onChange={(e) => setSearchTerm(e.target.value)}
-                                    />
-                                </div>
-                            </div>
                             
+                            {/* Filtro Cidade */}
+                            <div className="w-full md:w-1/4">
+                                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Filtrar por Cidade</label>
+                                <select 
+                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
+                                    value={cityFilter}
+                                    onChange={(e) => setCityFilter(e.target.value)}
+                                >
+                                    <option value="Todas">Todas as Cidades</option>
+                                    {uniqueCities.map(city => <option key={city} value={city}>{city}</option>)}
+                                </select>
+                            </div>
+
+                            {/* Filtro Projeto */}
                             <div className="w-full md:w-1/4">
                                 <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Filtrar por Projeto</label>
                                 <select 
@@ -449,17 +522,33 @@
                                 </select>
                             </div>
 
+                            {/* Filtro Situação - ATUALIZADO */}
                             <div className="w-full md:w-1/4">
-                                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Situação da Turma</label>
+                                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Situação do Contrato</label>
                                 <select 
                                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
                                     value={statusFilter}
                                     onChange={(e) => setStatusFilter(e.target.value)}
                                 >
                                     <option value="Todos">Todas as Situações</option>
-                                    <option value="Ativa">Ativa</option>
-                                    <option value="Finalizada">Finalizada</option>
+                                    <option value="Ativos">Somente Ativos</option>
+                                    <option value="Desligados">Somente Desligados</option>
+                                    <option value="Finalizados">Somente Finalizados</option>
                                 </select>
+                            </div>
+                            
+                            <div className="w-full md:w-1/4">
+                                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Buscar</label>
+                                <div className="relative">
+                                    <i data-lucide="search" className="absolute left-3 top-2.5 w-4 h-4 text-gray-400"></i>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Nome, empresa..." 
+                                        className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                </div>
                             </div>
                         </div>
 
@@ -492,16 +581,35 @@
                             />
                         </div>
 
-                        {/* Charts Section - 2 Colunas */}
+                        {/* Charts Section - Cidades */}
+                        <div className="mb-4">
+                            <h2 className="text-lg font-bold text-gray-700 mb-2 border-l-4 border-senac-blue pl-2">Análise por Localidade</h2>
+                        </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                            <ChartContainer title="Distribuição de Ativos por Cidade" id="chartAtivos" />
-                            <ChartContainer title="Distribuição de Desligamentos por Cidade" id="chartDesligados" />
+                            <ChartContainer title="Ativos por Cidade (Top 15 ou Seleção)" id="chartAtivos" />
+                            <ChartContainer title="Desligamentos por Cidade (Top 15 ou Seleção)" id="chartDesligados" />
+                        </div>
+
+                        {/* Charts Section - Análise de Desligamentos */}
+                        <div className="mb-4 mt-8">
+                            <h2 className="text-lg font-bold text-gray-700 mb-2 border-l-4 border-senac-orange pl-2">Análise de Desligamentos</h2>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                            <ChartContainer title="Evolução de Desligamentos (Linha do Tempo)" id="chartEvolucao" />
+                            <ChartContainer title="Top Empresas com Desligamentos" id="chartEmpresaDesl" />
+                        </div>
+
+                        {/* Charts Section - Geral */}
+                         <div className="mb-4 mt-8">
+                            <h2 className="text-lg font-bold text-gray-700 mb-2 border-l-4 border-gray-400 pl-2">Panorama Geral</h2>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
                             <ChartContainer title="Top 5 Empresas com mais Ativos" id="chartEmpresas" />
-                            <ChartContainer title="Panorama Geral dos Contratos" id="chartStatus" />
+                            <ChartContainer title="Status Geral dos Contratos" id="chartStatus" />
                         </div>
 
                         {/* Data Table */}
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mt-8">
                             <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                                 <h3 className="font-semibold text-gray-700">Detalhamento dos Dados</h3>
                                 <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded-full">{filteredData.length} Registros</span>
