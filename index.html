@@ -24,6 +24,9 @@
     <!-- PapaParse for CSV -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
 
+    <!-- SheetJS for Excel (.xlsx, .xls) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
         
@@ -72,10 +75,14 @@
         // --- Função Auxiliar de Formatação de Data ---
         const formatDate = (dateString) => {
             if (!dateString) return "-";
-            if (dateString.includes('/')) return dateString;
+            if (dateString instanceof Date) return dateString.toLocaleDateString('pt-BR');
+            if (typeof dateString === 'string' && dateString.includes('/')) return dateString;
             try {
-                const [year, month, day] = dateString.split('-');
-                if (day && month && year) return `${day}/${month}/${year}`;
+                // Tenta lidar com string ISO
+                if (typeof dateString === 'string' && dateString.includes('-')) {
+                    const [year, month, day] = dateString.split('-');
+                    if (day && month && year) return `${day}/${month}/${year}`;
+                }
             } catch (e) { return dateString; }
             return dateString;
         };
@@ -119,41 +126,68 @@
             const chartInstance1 = useRef(null);
             const chartInstance2 = useRef(null);
 
-            // Effect para carregar ícones SEMPRE que os dados mudarem (corrige o loop infinito)
             useEffect(() => {
                 if (window.lucide) {
                     window.lucide.createIcons();
                 }
-            }, [filteredData, data]); // Dependências específicas
+            }, [filteredData, data]);
+
+            // Função para processar os dados brutos (seja de CSV ou Excel)
+            const processImportedData = (rawData) => {
+                const formattedData = rawData.map(row => {
+                    const getVal = (key) => row[key] || row[key.trim()] || row[key + ' '] || '';
+                    return {
+                        projeto: getVal('Projeto'),
+                        turma: getVal('Turma'),
+                        situacao: getVal('Situação'),
+                        inicio: getVal('Data de Inicio'),
+                        fim: getVal('Data Fim'),
+                        empresa: getVal('Empresa'),
+                        cidade: getVal('Cidade'),
+                        estado: getVal('Estado'),
+                        nome: getVal('Nome do Aprendiz'),
+                        matricula: getVal('Matricula'),
+                        desligamento: getVal('Data Desligamento')
+                    };
+                });
+                const cleanData = formattedData.filter(d => d.projeto && d.nome);
+                setData(cleanData);
+            };
 
             const handleFileUpload = (event) => {
                 const file = event.target.files[0];
-                if (file) {
+                if (!file) return;
+
+                const fileName = file.name.toLowerCase();
+
+                // Lógica para Excel (.xlsx, .xls)
+                if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        // Pega a primeira aba da planilha
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        // Converte para JSON
+                        // raw: false tenta formatar os valores (ex: datas) como strings visualizáveis
+                        const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false, defval: "" });
+                        processImportedData(jsonData);
+                    };
+                    reader.readAsArrayBuffer(file);
+                } 
+                // Lógica para CSV
+                else if (fileName.endsWith('.csv')) {
                     Papa.parse(file, {
                         header: true,
                         skipEmptyLines: true,
                         encoding: "UTF-8",
                         complete: (results) => {
-                            const formattedData = results.data.map(row => {
-                                const getVal = (key) => row[key] || row[key.trim()] || row[key + ' '] || '';
-                                return {
-                                    projeto: getVal('Projeto'),
-                                    turma: getVal('Turma'),
-                                    situacao: getVal('Situação'),
-                                    inicio: getVal('Data de Inicio'),
-                                    fim: getVal('Data Fim'),
-                                    empresa: getVal('Empresa'),
-                                    cidade: getVal('Cidade'),
-                                    estado: getVal('Estado'),
-                                    nome: getVal('Nome do Aprendiz'),
-                                    matricula: getVal('Matricula'),
-                                    desligamento: getVal('Data Desligamento')
-                                };
-                            });
-                            const cleanData = formattedData.filter(d => d.projeto && d.nome);
-                            setData(cleanData);
+                            processImportedData(results.data);
                         }
                     });
+                } else {
+                    alert("Formato de arquivo não suportado. Por favor use .xlsx, .xls ou .csv");
                 }
             };
 
@@ -215,7 +249,6 @@
                 const ctx1 = document.getElementById('chartDesligados');
                 const ctx2 = document.getElementById('chartStatus');
 
-                // Cleanup mais seguro
                 if (chartInstance1.current) {
                     chartInstance1.current.destroy();
                     chartInstance1.current = null;
@@ -240,7 +273,7 @@
                         options: { 
                             responsive: true, 
                             maintainAspectRatio: false,
-                            animation: { duration: 500 } // Reduz duração da animação para performance
+                            animation: { duration: 500 } 
                         }
                     });
                 }
@@ -263,7 +296,6 @@
                     });
                 }
                 
-                // Cleanup function do useEffect
                 return () => {
                      if (chartInstance1.current) chartInstance1.current.destroy();
                      if (chartInstance2.current) chartInstance2.current.destroy();
@@ -291,8 +323,8 @@
                             <div className="flex gap-2 no-print">
                                 <label className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg cursor-pointer transition text-sm text-gray-700 font-medium">
                                     <i data-lucide="upload-cloud" className="w-4 h-4"></i>
-                                    Carregar Planilha (CSV)
-                                    <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+                                    Carregar Arquivo (Excel/CSV)
+                                    <input type="file" accept=".csv, .xlsx, .xls" onChange={handleFileUpload} className="hidden" />
                                 </label>
                                 <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-senac-blue hover:bg-blue-800 text-white rounded-lg transition text-sm font-medium shadow-md">
                                     <i data-lucide="printer" className="w-4 h-4"></i>
